@@ -1,0 +1,111 @@
+#!/bin/bash
+#
+# mkpatch - examine changes made to files and create a patch file
+#
+# This is free and unencumbered software released into the public domain.
+# Current version at: https://github.com/chip-rosenthal/mkpatch
+# Chip Rosenthal <chip@unicom.com>
+#
+
+set -o errexit -o nounset
+
+SYNOPSIS="mkpatch [-h] ENTRY ..."
+
+SUFFIX=".orig"
+
+die() {
+    echo "$0: $@" >&2
+    exit 1
+}
+
+usage_error() {
+    echo "usage: $SYNOPSIS (try \"-h\" for help)" >&2
+    exit 1
+}
+
+show_help() {
+    cat <<_EOT_
+NAME
+    mkpatch - examine changes made to files and create a patch file
+
+SYNOPSIS
+    $SYNOPSIS
+
+OPTIONS
+    -h      Display this help.
+
+DESCRIPTION
+    Examines changes made to files and create a file that can be used
+    by the patch(1) utility to apply those changes.
+
+    The original version of the file must have a "$SUFFIX" suffix.
+
+    The ENTRY arguments on the command line may be files or directories.
+
+    If ENTRY is a file, differences between the "$SUFFIX" version of that
+    file and the current version are added to the patch. The file may be
+    specified either with or without the "$SUFFIX" suffix.
+
+    If ENTRY is a directory then it is recursively scanned for files
+    with a "$SUFFIX" suffix, and all of those files are added to the patch.
+
+_EOT_
+}
+
+while getopts 'h' opt ; do
+    case "$opt" in
+    h) show_help ; exit 0 ;;
+    *) usage_error ;;
+    esac
+done
+shift $((OPTIND-1))
+if [[ $# -eq 0 ]] ; then
+    usage_error
+fi
+
+process_file() {
+    local file=$1
+
+    local newFile=`echo "$file" | sed -e "s!${SUFFIX}!!"`
+    if [[ ! -f ${newFile} ]] ; then
+        die "new file \"${newFile}\" not found"
+    fi
+
+    local origFile="${newFile}${SUFFIX}"
+    if [[ ! -f ${origFile} ]] ; then
+        die "original file \"${origFile}\" not found"
+    fi
+
+    echo "${origFile} -> ${newFile}" >&2
+    echo ""
+    echo "Index: $newFile"
+    diff -u ${origFile} ${newFile} || rc=$?
+    if [ $rc -ge 2 ]  ; then
+        echo "$0: diff failed" >&2
+        exit 1
+    fi
+}
+
+process_directory() {
+    local dir=$1
+    local file
+    find $dir -type f \
+        | fgrep -- "${SUFFIX}"  \
+        | while read file
+    do
+        process_file $file
+    done
+}
+
+echo "# This is a patch(1) input file. Process with: patch -N -p0 <thisFile"
+
+for entry in $@ ; do
+    if [[ -f $entry ]] ; then
+        process_file $entry
+    elif [[ -d $entry ]] ; then
+        process_directory $entry
+    else
+        die "entry \"$entry\" not a file or directory"
+    fi
+done
+
